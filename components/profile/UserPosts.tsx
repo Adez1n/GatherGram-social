@@ -5,11 +5,6 @@ type UserPostsProps = {
   userId: string;
 };
 
-type RepostRow = {
-  postId: string;
-  repostedAt: Date | string;
-};
-
 function formatPostDate(date: Date) {
   return new Intl.DateTimeFormat("es", {
     dateStyle: "medium",
@@ -18,7 +13,7 @@ function formatPostDate(date: Date) {
 }
 
 export default async function UserPosts({ userId }: UserPostsProps) {
-  const [posts, repostRows] = await Promise.all([
+  const [posts, reposts] = await Promise.all([
     prisma.post.findMany({
       where: {
         authorId: userId,
@@ -51,23 +46,16 @@ export default async function UserPosts({ userId }: UserPostsProps) {
         },
       },
     }),
-    prisma.$queryRaw<RepostRow[]>`
-      SELECT postId, createdAt AS repostedAt
-      FROM Repost
-      WHERE userId = ${userId}
-      ORDER BY createdAt DESC
-    `,
-  ]);
-
-  const repostedPostIds = repostRows.map((row) => row.postId);
-  const repostedPosts =
-    repostedPostIds.length > 0
-      ? await prisma.post.findMany({
-          where: {
-            id: {
-              in: repostedPostIds,
-            },
-          },
+    prisma.repost.findMany({
+      where: {
+        userId,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      select: {
+        createdAt: true,
+        post: {
           select: {
             id: true,
             content: true,
@@ -92,12 +80,11 @@ export default async function UserPosts({ userId }: UserPostsProps) {
               },
             },
           },
-        })
-      : [];
+        },
+      },
+    }),
+  ]);
 
-  const repostedAtByPostId = new Map(
-    repostRows.map((row) => [row.postId, new Date(row.repostedAt)]),
-  );
   const timelineItems = [
     ...posts.map((post) => ({
       key: `post-${post.id}`,
@@ -105,10 +92,10 @@ export default async function UserPosts({ userId }: UserPostsProps) {
       sortDate: post.createdAt,
       contextLabel: null as string | null,
     })),
-    ...repostedPosts.map((post) => ({
-      key: `repost-${post.id}`,
-      post,
-      sortDate: repostedAtByPostId.get(post.id) ?? post.createdAt,
+    ...reposts.map((repost) => ({
+      key: `repost-${repost.post.id}`,
+      post: repost.post,
+      sortDate: repost.createdAt,
       contextLabel: "Reposteado",
     })),
   ].sort((first, second) => second.sortDate.getTime() - first.sortDate.getTime());
