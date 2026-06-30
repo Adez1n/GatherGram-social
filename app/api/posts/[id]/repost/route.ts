@@ -1,24 +1,22 @@
-import { randomUUID } from "crypto";
 import { type NextRequest } from "next/server";
 import { errorResponse, handleApiError, jsonResponse } from "@/src/lib/api";
 import { getCurrentUser } from "@/src/lib/auth";
 import { prisma } from "@/src/lib/prisma";
 
 async function getRepostState(postId: string, userId?: string) {
-  const [countRows, repostRows] = await Promise.all([
-    prisma.$queryRaw<Array<{ count: bigint | number }>>`
-      SELECT COUNT(*) AS count FROM Repost WHERE postId = ${postId}
-    `,
+  const [repostsCount, repost] = await Promise.all([
+    prisma.repost.count({ where: { postId } }),
     userId
-      ? prisma.$queryRaw<Array<{ id: string }>>`
-          SELECT id FROM Repost WHERE userId = ${userId} AND postId = ${postId} LIMIT 1
-        `
-      : Promise.resolve([]),
+      ? prisma.repost.findUnique({
+          where: { userId_postId: { userId, postId } },
+          select: { id: true },
+        })
+      : Promise.resolve(null),
   ]);
 
   return {
-    reposted: repostRows.length > 0,
-    repostsCount: Number(countRows[0]?.count ?? 0),
+    reposted: Boolean(repost),
+    repostsCount,
   };
 }
 
@@ -67,10 +65,11 @@ export async function POST(
       return errorResponse("Post no encontrado", 404);
     }
 
-    await prisma.$executeRaw`
-      INSERT OR IGNORE INTO Repost (id, userId, postId, createdAt)
-      VALUES (${randomUUID()}, ${currentUser.id}, ${id}, CURRENT_TIMESTAMP)
-    `;
+    await prisma.repost.upsert({
+      where: { userId_postId: { userId: currentUser.id, postId: id } },
+      update: {},
+      create: { userId: currentUser.id, postId: id },
+    });
 
     return jsonResponse(await getRepostState(id, currentUser.id), 201);
   } catch (error) {
@@ -91,9 +90,9 @@ export async function DELETE(
 
     const { id } = await context.params;
 
-    await prisma.$executeRaw`
-      DELETE FROM Repost WHERE userId = ${currentUser.id} AND postId = ${id}
-    `;
+    await prisma.repost.deleteMany({
+      where: { userId: currentUser.id, postId: id },
+    });
 
     return jsonResponse(await getRepostState(id, currentUser.id));
   } catch (error) {
